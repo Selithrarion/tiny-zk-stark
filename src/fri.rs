@@ -32,14 +32,20 @@ where
 	F::from_le_bytes_mod_order(hash_bytes.as_ref())
 }
 
-fn generate_query_indices<F, H>(hasher: &H, roots: &[FriHash<F>], domain_size: usize, num_queries: usize) -> Vec<usize>
+fn generate_query_indices<F, H>(hasher: &H, roots: &[FriHash<F>], final_poly: &Poly<F>, domain_size: usize, num_queries: usize) -> Vec<usize>
 where
 	F: FftField + PrimeField,
 	H: Hasher<F>,
 {
+	let final_poly_hash = hasher.hash(&final_poly.iter().collect::<Vec<_>>());
+
 	(0..num_queries).map(|i| {
 		let i_as_field_element = F::from(i as u64);
-		let seed: Vec<&F> = roots.iter().chain(std::iter::once(&i_as_field_element)).collect();
+		let final_poly_hash_as_field_element = F::from_le_bytes_mod_order(final_poly_hash.as_ref());
+		let mut seed: Vec<&F> = Vec::with_capacity(roots.len() + 2);
+		seed.extend(roots.iter());
+		seed.push(&final_poly_hash_as_field_element);
+		seed.push(&i_as_field_element);
 		let hash_bytes = hasher.hash(&seed);
 		let mut seed_bytes = [0u8; 8];
 		seed_bytes.copy_from_slice(&hash_bytes.as_ref()[0..8]);
@@ -92,7 +98,7 @@ where
 
 	// query phase
 	let num_queries = 3; // todo: configurable?
-	let query_indices = generate_query_indices(hasher, &roots, initial_domain_size, num_queries);
+	let query_indices = generate_query_indices(hasher, &roots, &final_poly, initial_domain_size, num_queries);
 	let mut queries: Vec<FriQueryProof<F>> = Vec::new();
 
 	for &initial_idx in &query_indices {
@@ -134,7 +140,7 @@ where
 	// todo: handle multiple commitments
 	println!("start fri_verify");
 	let commitment = proof.commitments.get(0).context("no commitment found")?;
-	let query_indices = generate_query_indices(hasher, &commitment.roots, initial_domain_size, num_queries);
+	let query_indices = generate_query_indices(hasher, &commitment.roots, &commitment.final_poly, initial_domain_size, num_queries);
 
 	for (i, query) in proof.queries.iter().enumerate() {
 		let mut current_idx = *query_indices.get(i).context("query_indices.get(i) err")?;
